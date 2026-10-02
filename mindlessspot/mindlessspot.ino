@@ -1,4 +1,6 @@
 // MindlessSpot -- minimal single-fixture DMX spotlight controller.
+// Author: Stefan Vedeja
+// License: MIT License (../LICENSE)
 //
 // Hardware: Arduino UNO R4 WiFi, Modulino Joystick, Modulino Knob, Whadda
 // DMX512 module (driven from Serial1 TX, pin 1).
