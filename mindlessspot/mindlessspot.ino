@@ -50,6 +50,10 @@ constexpr int16_t JOYSTICK_FULL_SCALE = 127;
 
 constexpr int16_t DIMMER_STEP_PER_KNOB_TICK = 5; // percent
 constexpr int16_t DIMMER_START_PERCENT = 0;
+constexpr int32_t MAX_KNOB_TICKS_PER_READ = 16;
+constexpr unsigned long KNOB_SETTLE_MS = 20;
+constexpr unsigned long KNOB_RECOVERY_MS = 100;
+constexpr bool DIMMER_DIAGNOSTICS = true;
 
 // ---------------------------------------------------------------------------
 // DMX output
@@ -75,7 +79,12 @@ unsigned long lastDmxSendMs = 0;
 float panPos = 0.5f;
 float tiltPos = 0.5f;
 int16_t dimmerPercent = DIMMER_START_PERCENT;
-int16_t lastKnobValue = 0;
+uint16_t lastKnobValue = 0;
+bool haveKnobValue = false;
+bool knobRecovering = false;
+int32_t pendingKnobDelta = 0;
+int32_t appliedKnobDelta = 0;
+unsigned long lastKnobChangeMs = 0;
 unsigned long lastLoopMs = 0;
 
 void setChannel(uint16_t channel, uint8_t value) {
@@ -134,16 +143,65 @@ void sendFrame() {
     Serial1.write(dmxFrame[i]);
   }
 
+  if (DIMMER_DIAGNOSTICS && dmxFrame[DIMMER_CHANNEL] != sentFrame[DIMMER_CHANNEL]) {
+    Serial.print("DMX dimmer=");
+    Serial.print(dmxFrame[DIMMER_CHANNEL]);
+    Serial.print(" knob=");
+    Serial.print(lastKnobValue);
+    Serial.print(" ticks=");
+    Serial.println(appliedKnobDelta);
+  }
   memcpy(sentFrame, dmxFrame, sizeof(dmxFrame));
   lastDmxSendMs = millis();
 }
 
 void readKnob() {
-  int16_t value = knob.get();
-  int16_t delta = value - lastKnobValue;
+  uint8_t data[3];
+  if (!knob.read(data, sizeof(data))) {
+    if (knobRecovering) lastKnobChangeMs = millis();
+    return;
+  }
+  uint16_t value = static_cast<uint16_t>(data[0]) |
+                   (static_cast<uint16_t>(data[1]) << 8);
+  if (!haveKnobValue) {
+    lastKnobValue = value;
+    haveKnobValue = true;
+    return;
+  }
+  int32_t delta = static_cast<int32_t>(value) - lastKnobValue;
+  if (delta > 32767) delta -= 65536;
+  if (delta < -32768) delta += 65536;
   lastKnobValue = value;
+  if (delta > MAX_KNOB_TICKS_PER_READ || delta < -MAX_KNOB_TICKS_PER_READ) {
+    knobRecovering = true;
+    pendingKnobDelta = 0;
+    lastKnobChangeMs = millis();
+    if (DIMMER_DIAGNOSTICS) {
+      Serial.print("Ignored knob jump=");
+      Serial.print(delta);
+      Serial.print(" knob=");
+      Serial.println(value);
+    }
+    return;
+  }
+  if (knobRecovering) {
+    if (delta != 0) {
+      lastKnobChangeMs = millis();
+    } else if ((millis() - lastKnobChangeMs) >= KNOB_RECOVERY_MS) {
+      knobRecovering = false;
+      if (DIMMER_DIAGNOSTICS) Serial.println("Knob recovered");
+    }
+    return;
+  }
   if (delta != 0) {
-    dimmerPercent = constrain(dimmerPercent + delta * DIMMER_STEP_PER_KNOB_TICK, 0, 100);
+    pendingKnobDelta = constrain(pendingKnobDelta + delta, -65536L, 65536L);
+    lastKnobChangeMs = millis();
+  }
+  if (pendingKnobDelta != 0 &&
+      (millis() - lastKnobChangeMs) >= KNOB_SETTLE_MS) {
+    appliedKnobDelta = pendingKnobDelta;
+    dimmerPercent = constrain(dimmerPercent + pendingKnobDelta * DIMMER_STEP_PER_KNOB_TICK, 0, 100);
+    pendingKnobDelta = 0;
   }
 }
 
@@ -165,7 +223,7 @@ void setup() {
   Modulino.begin();
   joystick.begin();
   knob.begin();
-  lastKnobValue = knob.get();
+  readKnob();
 
   // Force the first frame out immediately.
   memset(sentFrame, 0xFF, sizeof(sentFrame));
