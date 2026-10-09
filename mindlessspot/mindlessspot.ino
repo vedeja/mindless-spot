@@ -43,10 +43,11 @@ constexpr StaticChannel STATIC_CHANNELS[] = {
 // ---------------------------------------------------------------------------
 // Control tuning
 // ---------------------------------------------------------------------------
-// Full joystick deflection sweeps the whole min..max range in this time.
+// Reference time to sweep the whole min..max range at a rate of 1.
 constexpr float FULL_SWEEP_SECONDS = 1.0f;
 constexpr int16_t JOYSTICK_DEADZONE = 8;
 constexpr int16_t JOYSTICK_FULL_SCALE = 127;
+constexpr float JOYSTICK_MAX_RATE = 1.5f;
 
 constexpr int16_t DIMMER_STEP_PER_KNOB_TICK = 5; // percent
 constexpr int16_t DIMMER_START_PERCENT = 0;
@@ -112,7 +113,9 @@ float joystickRate(int16_t raw) {
   if (abs(raw) < JOYSTICK_DEADZONE) {
     return 0.0f;
   }
-  return constrain(raw / static_cast<float>(JOYSTICK_FULL_SCALE), -1.0f, 1.0f);
+  float deflection = constrain(raw / static_cast<float>(JOYSTICK_FULL_SCALE), -1.0f, 1.0f);
+  float magnitude = abs(deflection);
+  return deflection * magnitude * (0.5f + 0.5f * magnitude) * JOYSTICK_MAX_RATE;
 }
 
 void buildFrame() {
@@ -209,10 +212,17 @@ void readKnob() {
 }
 
 void readJoystick(float dtSeconds) {
+  uint8_t data[3];
+  if (!joystick.read(data, sizeof(data))) {
+    return;
+  }
+  joystick.map_value(data[0], data[1]);
+  int16_t joystickX = 128 - static_cast<int16_t>(data[0]);
+  int16_t joystickY = 128 - static_cast<int16_t>(data[1]);
   float step = dtSeconds / FULL_SWEEP_SECONDS;
   // The Modulino Joystick is mounted rotated: its Y axis is horizontal.
-  float panRate = joystickRate(joystick.getY());
-  float tiltRate = joystickRate(joystick.getX());
+  float panRate = joystickRate(joystickY);
+  float tiltRate = joystickRate(joystickX);
   if (PAN_INVERT) panRate = -panRate;
   if (TILT_INVERT) tiltRate = -tiltRate;
   panPos = constrain(panPos + panRate * step, 0.0f, 1.0f);
@@ -233,13 +243,12 @@ void setup() {
 }
 
 void loop() {
-  joystick.update();
+  readKnob();
 
   unsigned long nowMs = millis();
   float dtSeconds = constrain((nowMs - lastLoopMs) / 1000.0f, 0.001f, 0.2f);
   lastLoopMs = nowMs;
 
-  readKnob();
   readJoystick(dtSeconds);
   buildFrame();
 
