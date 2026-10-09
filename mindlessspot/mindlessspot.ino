@@ -53,7 +53,6 @@ constexpr int16_t DIMMER_START_PERCENT = 0;
 constexpr int32_t MAX_KNOB_TICKS_PER_READ = 16;
 constexpr unsigned long KNOB_SETTLE_MS = 20;
 constexpr unsigned long KNOB_RECOVERY_MS = 100;
-constexpr bool DIMMER_DIAGNOSTICS = true;
 
 // ---------------------------------------------------------------------------
 // DMX output
@@ -83,7 +82,6 @@ uint16_t lastKnobValue = 0;
 bool haveKnobValue = false;
 bool knobRecovering = false;
 int32_t pendingKnobDelta = 0;
-int32_t appliedKnobDelta = 0;
 unsigned long lastKnobChangeMs = 0;
 unsigned long lastLoopMs = 0;
 
@@ -143,14 +141,6 @@ void sendFrame() {
     Serial1.write(dmxFrame[i]);
   }
 
-  if (DIMMER_DIAGNOSTICS && dmxFrame[DIMMER_CHANNEL] != sentFrame[DIMMER_CHANNEL]) {
-    Serial.print("DMX dimmer=");
-    Serial.print(dmxFrame[DIMMER_CHANNEL]);
-    Serial.print(" knob=");
-    Serial.print(lastKnobValue);
-    Serial.print(" ticks=");
-    Serial.println(appliedKnobDelta);
-  }
   memcpy(sentFrame, dmxFrame, sizeof(dmxFrame));
   lastDmxSendMs = millis();
 }
@@ -176,12 +166,6 @@ void readKnob() {
     knobRecovering = true;
     pendingKnobDelta = 0;
     lastKnobChangeMs = millis();
-    if (DIMMER_DIAGNOSTICS) {
-      Serial.print("Ignored knob jump=");
-      Serial.print(delta);
-      Serial.print(" knob=");
-      Serial.println(value);
-    }
     return;
   }
   if (knobRecovering) {
@@ -189,7 +173,6 @@ void readKnob() {
       lastKnobChangeMs = millis();
     } else if ((millis() - lastKnobChangeMs) >= KNOB_RECOVERY_MS) {
       knobRecovering = false;
-      if (DIMMER_DIAGNOSTICS) Serial.println("Knob recovered");
     }
     return;
   }
@@ -199,7 +182,6 @@ void readKnob() {
   }
   if (pendingKnobDelta != 0 &&
       (millis() - lastKnobChangeMs) >= KNOB_SETTLE_MS) {
-    appliedKnobDelta = pendingKnobDelta;
     dimmerPercent = constrain(dimmerPercent + pendingKnobDelta * DIMMER_STEP_PER_KNOB_TICK, 0, 100);
     pendingKnobDelta = 0;
   }
@@ -217,7 +199,6 @@ void readJoystick(float dtSeconds) {
 }
 
 void setup() {
-  Serial.begin(115200);
   Serial1.begin(250000, SERIAL_8N2);
 
   Modulino.begin();
