@@ -53,6 +53,7 @@ constexpr int16_t DIMMER_START_PERCENT = 0;
 constexpr int32_t MAX_KNOB_TICKS_PER_READ = 16;
 constexpr unsigned long KNOB_SETTLE_MS = 20;
 constexpr unsigned long KNOB_RECOVERY_MS = 100;
+constexpr unsigned long KNOB_BUTTON_DEBOUNCE_MS = 30;
 
 // ---------------------------------------------------------------------------
 // DMX output
@@ -78,6 +79,9 @@ unsigned long lastDmxSendMs = 0;
 float panPos = 0.5f;
 float tiltPos = 0.5f;
 int16_t dimmerPercent = DIMMER_START_PERCENT;
+bool knobButtonRaw = false;
+bool knobButtonPressed = false;
+unsigned long lastKnobButtonChangeMs = 0;
 uint16_t lastKnobValue = 0;
 bool haveKnobValue = false;
 bool knobRecovering = false;
@@ -145,12 +149,29 @@ void sendFrame() {
   lastDmxSendMs = millis();
 }
 
+void updateKnobButton(bool pressed) {
+  if (pressed != knobButtonRaw) {
+    knobButtonRaw = pressed;
+    lastKnobButtonChangeMs = millis();
+  }
+  if (pressed != knobButtonPressed &&
+      (millis() - lastKnobButtonChangeMs) >= KNOB_BUTTON_DEBOUNCE_MS) {
+    knobButtonPressed = pressed;
+    if (pressed) {
+      dimmerPercent = dimmerPercent == 0 ? 100 : 0;
+      pendingKnobDelta = 0;
+    }
+  }
+}
+
 void readKnob() {
   uint8_t data[3];
   if (!knob.read(data, sizeof(data))) {
     if (knobRecovering) lastKnobChangeMs = millis();
+    lastKnobButtonChangeMs = millis();
     return;
   }
+  updateKnobButton(data[2] != 0);
   uint16_t value = static_cast<uint16_t>(data[0]) |
                    (static_cast<uint16_t>(data[1]) << 8);
   if (!haveKnobValue) {
